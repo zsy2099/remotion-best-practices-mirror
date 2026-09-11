@@ -21,7 +21,7 @@ jobs:
         env:
           BASE: 'https://clawhub.ai/api/v1/skills/remotion/file?ownerHandle=am-will&path='
         run: |
-          set -euo pipefail
+          set -uo pipefail
           FILES=(
             "SKILL.md"
             "rules/3d.md"
@@ -56,11 +56,28 @@ jobs:
             "rules/trimming.md"
             "rules/videos.md"
           )
+          failures=()
           for f in "${FILES[@]}"; do
             enc=$(printf '%s' "$f" | jq -sRr @uri)
             mkdir -p "$(dirname "$f")"
-            curl -fsSL "${BASE}${enc}" -o "$f"
+            ok=0
+            for attempt in 1 2 3 4; do
+              if curl -fsSL --max-time 30 "${BASE}${enc}" -o "$f"; then
+                ok=1; break
+              fi
+              echo "  attempt $attempt failed for $f; sleeping $((attempt*5))s"
+              sleep $((attempt*5))
+            done
+            if [ "$ok" -ne 1 ]; then
+              failures+=("$f")
+              echo "::error::Persistent fetch failure: $f"
+            fi
           done
+          if [ "${#failures[@]}" -gt 0 ]; then
+            echo "::error::${#failures[@]} file(s) failed to fetch from ClawHub after retries. Rolling back working tree."
+            git checkout HEAD -- .
+            exit 1
+          fi
           echo "Fetched ${#FILES[@]} files from ClawHub."
 
       - name: Commit and push if changed
